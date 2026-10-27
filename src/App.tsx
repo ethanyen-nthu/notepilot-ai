@@ -33,6 +33,8 @@ import { DocumentViewer } from "./components/DocumentViewer";
 import { AnswerOverlay, copyText } from "./components/AnswerOverlay";
 import { MathText } from "./components/MathText";
 import { newId } from "./id";
+import { followUpQuestions, type FollowUp } from "../shared/tutor";
+import { VoiceInput } from "./components/VoiceInput";
 
 const modeOptions = [
   { id: "hint", name: "A little hint", caption: "Find your starting point" },
@@ -59,6 +61,10 @@ export default function App() {
     (TutorReply & { question: string; id: string }) | null
   >(null);
   const [busy, setBusy] = useState(false);
+  const [voiceActive, setVoiceActive] = useState(false);
+  const [voiceEpoch, setVoiceEpoch] = useState(0);
+  const [transcriptionAvailable, setTranscriptionAvailable] = useState(false);
+  const [spoken, setSpoken] = useState(false);
   const [saving, setSaving] = useState(false);
   const [provider, setProvider] = useState<"demo" | "openai" | "offline">(
     "offline",
@@ -105,7 +111,10 @@ export default function App() {
         return r.json();
       })
       .then((data) => {
-        if (active) setProvider(data.provider === "openai" ? "openai" : "demo");
+        if (active) {
+          setProvider(data.provider === "openai" ? "openai" : "demo");
+          setTranscriptionAvailable(data.transcription === true);
+        }
       })
       .catch(() => {
         if (active) setProvider("offline");
@@ -140,6 +149,8 @@ export default function App() {
     }
   }
   function resetConversation() {
+    setVoiceEpoch((epoch) => epoch + 1);
+    setVoiceActive(false);
     controller.current?.abort();
     controller.current = null;
     setBusy(false);
@@ -198,9 +209,18 @@ export default function App() {
     }
     if (upload.current) upload.current.value = "";
   }
-  async function submitQuestion(event?: React.FormEvent) {
+  async function submitQuestion(event?: React.FormEvent, followUp?: FollowUp) {
     event?.preventDefault();
-    if (!current || !context || !question.trim() || busy) return;
+    const asked = followUp ? followUpQuestions[followUp] : question.trim();
+    if (
+      !current ||
+      !context ||
+      !asked ||
+      busy ||
+      voiceActive ||
+      (followUp && !history.length)
+    )
+      return;
     if (history.length >= 12) {
       setError(
         "This conversation has reached six exchanges. Start a new question to continue.",
@@ -211,7 +231,6 @@ export default function App() {
     controller.current = abort;
     setBusy(true);
     setError("");
-    const asked = question.trim();
     try {
       const response = await fetch("/api/tutor", {
         method: "POST",
@@ -220,6 +239,7 @@ export default function App() {
         body: JSON.stringify({
           question: asked,
           mode,
+          followUp,
           context: {
             title: current.title.slice(0, 250),
             page,
@@ -244,7 +264,8 @@ export default function App() {
         { role: "user", content: asked },
         { role: "assistant", content: data.answer },
       ]);
-      setQuestion("");
+      if (!followUp)
+        setQuestion((draft) => (draft.trim() === asked ? "" : draft));
       setProvider(data.provider);
     } catch (e) {
       if (!abort.signal.aborted)
@@ -437,8 +458,8 @@ export default function App() {
             </span>
             <strong>Yours, on this device.</strong>
             <p>
-              Your library stays in your browser. Only the page you ask about is
-              sent for AI tutoring.
+              Your library stays here. Questions send a page; Transcribe
+              recording sends audio.
             </p>
           </div>
           <button className="help-link" onClick={() => setDialog("help")}>
@@ -752,6 +773,7 @@ export default function App() {
                           <button
                             key={option.id}
                             className={mode === option.id ? "selected" : ""}
+                            aria-pressed={mode === option.id}
                             onClick={() => setMode(option.id)}
                           >
                             <span className="radio-dot" />
@@ -839,6 +861,17 @@ export default function App() {
                         </div>
                       )}
                     </div>
+                    <div className="response-preference">
+                      <label htmlFor="response-mode">Response mode</label>
+                      <select
+                        id="response-mode"
+                        value={spoken ? "spoken" : "text"}
+                        onChange={(e) => setSpoken(e.target.value === "spoken")}
+                      >
+                        <option value="text">Text only</option>
+                        <option value="spoken">Text + spoken answer</option>
+                      </select>
+                    </div>
                     <form
                       className="question-form"
                       onSubmit={(e) => {
@@ -848,6 +881,20 @@ export default function App() {
                       <label className="sr-only" htmlFor="question">
                         Ask about your notes
                       </label>
+                      <VoiceInput
+                        key={`${current.id}:${page}:${voiceEpoch}:${transcriptionAvailable}`}
+                        serverAvailable={transcriptionAvailable}
+                        disabled={busy || !context}
+                        onActiveChange={setVoiceActive}
+                        onTranscript={(text) =>
+                          setQuestion((draft) =>
+                            [draft.trim(), text]
+                              .filter(Boolean)
+                              .join(" ")
+                              .slice(0, 4000),
+                          )
+                        }
+                      />
                       <textarea
                         id="question"
                         maxLength={4000}
@@ -889,6 +936,7 @@ export default function App() {
                             disabled={
                               !question.trim() ||
                               !context ||
+                              voiceActive ||
                               provider === "offline"
                             }
                           >
@@ -936,6 +984,14 @@ export default function App() {
           }}
           onDismiss={() => setReply(null)}
           onError={reportError}
+          spoken={spoken}
+          voiceActive={voiceActive}
+          followUpDisabled={
+            busy || voiceActive || !context || history.length >= 12
+          }
+          onFollowUp={(action) => {
+            void submitQuestion(undefined, action);
+          }}
         />
       )}
       {notice && (
@@ -1003,8 +1059,10 @@ export default function App() {
                 </ol>
                 <p>
                   Demo responses are scripted. Real tutoring needs a server-side
-                  OpenAI key. Voice and PNG/PDF answer export are planned for
-                  later milestones.
+                  OpenAI key. Tap Speak to draft a question, review the
+                  transcript, then submit it. Text + spoken answer enables
+                  browser speech. PNG/PDF answer export is planned for a later
+                  milestone.
                 </p>
                 <p>
                   Library storage belongs to this browser. Clearing site data
