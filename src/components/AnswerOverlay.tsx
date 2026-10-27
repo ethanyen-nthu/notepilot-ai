@@ -11,6 +11,8 @@ import {
 } from "lucide-react";
 import { MathText } from "./MathText";
 import type { TutorReply } from "../../shared/tutor";
+import type { FollowUp } from "../../shared/tutor";
+import { SpeechControls } from "./SpeechControls";
 
 export async function copyText(text: string) {
   if (navigator.clipboard?.writeText) {
@@ -47,6 +49,10 @@ export function AnswerOverlay({
   onKeep,
   onDismiss,
   onError,
+  spoken = false,
+  voiceActive = false,
+  followUpDisabled = false,
+  onFollowUp,
 }: {
   reply: TutorReply;
   question: string;
@@ -54,6 +60,10 @@ export function AnswerOverlay({
   onKeep: () => void;
   onDismiss: () => void;
   onError: (s: string) => void;
+  spoken?: boolean;
+  voiceActive?: boolean;
+  followUpDisabled?: boolean;
+  onFollowUp?: (action: FollowUp) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -147,7 +157,10 @@ export function AnswerOverlay({
             aria-label={
               collapsed ? "Expand explanation" : "Collapse explanation"
             }
-            onClick={() => setCollapsed((v) => !v)}
+            onClick={() => {
+              setCollapsed((v) => !v);
+              setPosition({ x: 0, y: 0 });
+            }}
           >
             {collapsed ? <Maximize2 size={16} /> : <Minus size={16} />}
           </button>
@@ -165,8 +178,31 @@ export function AnswerOverlay({
                 : "OPENAI · AI GENERATED"}
             </span>
             <h3>{question}</h3>
+            {spoken && (
+              <SpeechControls text={reply.answer} blocked={voiceActive} />
+            )}
             <MathText text={reply.answer} />
           </div>
+          {onFollowUp && (
+            <nav
+              className="follow-up-actions"
+              aria-label="Refine this explanation"
+            >
+              {(["further", "simpler", "another"] as const).map((action) => (
+                <button
+                  key={action}
+                  disabled={followUpDisabled}
+                  onClick={() => onFollowUp(action)}
+                >
+                  {action === "further"
+                    ? "Explain further"
+                    : action === "simpler"
+                      ? "Explain more simply"
+                      : "Show another method"}
+                </button>
+              ))}
+            </nav>
+          )}
           <footer>
             <button
               className="text-button"
@@ -182,7 +218,10 @@ export function AnswerOverlay({
             <button
               className="text-button"
               aria-pressed={expanded}
-              onClick={() => setExpanded((v) => !v)}
+              onClick={() => {
+                setExpanded((v) => !v);
+                setPosition({ x: 0, y: 0 });
+              }}
             >
               <Maximize2 size={15} />
               {expanded ? "Compact" : "Enlarge"}
