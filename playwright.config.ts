@@ -15,7 +15,12 @@ export default defineConfig({
   webServer: {
     command: "npm run start",
     url: "http://127.0.0.1:4173",
-    env: { PORT: "4173", HOST: "127.0.0.1", OPENAI_API_KEY: "" },
+    env: {
+      PORT: "4173",
+      HOST: "127.0.0.1",
+      OPENAI_API_KEY: "",
+      API_REQUESTS_PER_MINUTE: "200",
+    },
     reuseExistingServer: !process.env.CI,
   },
 });

@@ -14,6 +14,35 @@ const input = {
 } as const;
 const body = () => ({ ...input, history: [] });
 describe("tutoring API", () => {
+  it("supports a trusted loopback HTTPS proxy while rejecting spoofed and cross-origin requests", async () => {
+    const trusted = createApp(new DemoProvider(), false, null, {
+      trustProxy: "loopback",
+    });
+    const secureRequest = (app: ReturnType<typeof createApp>, origin: string) =>
+      request(app)
+        .post("/api/tutor")
+        .set("Host", "notes.example")
+        .set("Origin", origin)
+        .set("X-Forwarded-Proto", "https")
+        .send(body());
+    expect((await secureRequest(trusted, "https://notes.example")).status).toBe(
+      200,
+    );
+    expect((await secureRequest(trusted, "https://other.example")).status).toBe(
+      403,
+    );
+    expect((await secureRequest(trusted, "http://notes.example")).status).toBe(
+      403,
+    );
+    expect(
+      (
+        await secureRequest(
+          createApp(new DemoProvider(), false, null),
+          "https://notes.example",
+        )
+      ).status,
+    ).toBe(403);
+  });
   it("reports demo mode and labels every scripted response", async () => {
     const app = createApp(new DemoProvider(), false);
     expect((await request(app).get("/api/status")).body.provider).toBe("demo");
@@ -93,6 +122,54 @@ describe("tutoring API", () => {
   });
 });
 describe("provider adapters", () => {
+  it("retains the same conversation and action when refining an explanation", async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          output: [
+            {
+              content: [{ type: "output_text", text: "Simpler explanation" }],
+            },
+          ],
+        }),
+      ),
+    );
+    const input = {
+      ...body(),
+      followUp: "simpler" as const,
+      history: [
+        { role: "user" as const, content: "My original problem" },
+        { role: "assistant" as const, content: "The previous explanation" },
+      ],
+    };
+    await new OpenAIProvider("fake-key", "test-model", fetcher).answer(input);
+    const payload = JSON.parse(fetcher.mock.calls[0][1]!.body as string);
+    expect(payload.instructions).toContain("Follow-up action: simpler");
+    expect(payload.input.slice(0, 2)).toEqual(input.history);
+    expect(payload.input[2].content[0].text).toContain("chain rule");
+    expect(
+      (
+        await request(createApp(new DemoProvider(), false))
+          .post("/api/tutor")
+          .send({ ...body(), followUp: "invalid" })
+      ).status,
+    ).toBe(400);
+  });
+  it("labels follow-up demo variations and preserves hint mode", async () => {
+    const provider = new DemoProvider();
+    const simpler = await provider.answer({ ...body(), followUp: "simpler" });
+    const another = await provider.answer({ ...body(), followUp: "another" });
+    const hint = await provider.answer({
+      ...body(),
+      followUp: "another",
+      mode: "hint",
+    });
+    expect(simpler.answer).toContain("two layers");
+    expect(another.answer).toContain("expand");
+    expect(hint.answer).not.toContain("24x");
+    expect(simpler.provider).toBe("demo");
+    expect(another.answer).toContain("Scripted example");
+  });
   it("uses demo only when no key is configured", () => {
     expect(createProvider("")).toBeInstanceOf(DemoProvider);
     expect(createProvider("test-key")).toBeInstanceOf(OpenAIProvider);

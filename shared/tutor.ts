@@ -1,8 +1,16 @@
 import { z } from "zod";
 export const modes = ["hint", "steps", "answer"] as const;
+export const followUpQuestions = {
+  further: "Explain further, keeping the same problem and page context.",
+  simpler: "Explain more simply, keeping the same problem and page context.",
+  another:
+    "Show another method for the same problem, if a valid alternative exists.",
+} as const;
+export type FollowUp = keyof typeof followUpQuestions;
 export const tutorSchema = z.object({
   question: z.string().trim().min(1).max(4000),
   mode: z.enum(modes),
+  followUp: z.enum(["further", "simpler", "another"]).optional(),
   context: z.object({
     title: z.string().max(250),
     page: z.number().int().min(1),
